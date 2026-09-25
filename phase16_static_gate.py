@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 16: static x86_64 mapping of the Chromium ANGLE/EGL gate.
+"""Phase 16: static x86_64 mapping of the Chromium ANGLE/EGL gate (parser fix).
 
 Read-only. Maps relevant strings into the x86_64 __TEXT,__text section and
 finds RIP-relative code references. Optionally asks LLDB for a small
