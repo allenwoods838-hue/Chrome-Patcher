@@ -134,26 +134,26 @@ def phase16_static_gate() -> str:
         pending = {}
         for line in text.splitlines():
             s = line.strip()
-            m = re.match(r"segname\s+(__\S+)", s)
+            m = re.match(r"sectname\\s+(__\\S+)", s)
             if m:
-                seg = m.group(1)
-                current = None
-                pending = {}
-                continue
-            m = re.match(r"sectname\s+(__\S+)", s)
-            if m and seg == "__TEXT":
                 current = m.group(1)
                 pending = {}
                 continue
-            if seg != "__TEXT" or current is None:
+            m = re.match(r"segname\\s+(__\\S+)", s)
+            if m:
+                seg = m.group(1)
+                continue
+            if current is None or seg != "__TEXT":
                 continue
             for key in ("addr", "size", "offset"):
-                m = re.match(rf"{key}\s+(0x[0-9a-fA-F]+|\d+)", s)
+                m = re.match(rf"{key}\\s+(0x[0-9a-fA-F]+|\\d+)", s)
                 if m:
                     pending[key] = int(m.group(1), 0)
             if {"addr", "size", "offset"} <= pending.keys():
                 result[current] = (pending["addr"], pending["size"], pending["offset"])
+                pending = {}
         return result
+
 
     sec = sections(load_info)
     if "__text" not in sec or "__cstring" not in sec:
