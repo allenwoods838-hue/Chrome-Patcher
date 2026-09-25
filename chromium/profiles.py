@@ -9,4 +9,4 @@ def get(milestone:int):
     return PROFILES.get(milestone)
 if __name__=="__main__":
     for milestone, profile in sorted(PROFILES.items()):
-        print(f"M{milestone}: {profile["status"]} / patch={profile["patch_status"]}")
+        print(f"M{milestone}: {profile['status']} / patch={profile['patch_status']}")
