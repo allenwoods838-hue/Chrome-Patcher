@@ -39,33 +39,32 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 def parse_section_table(text: str) -> dict[str, tuple[int, int, int]]:
+    """Parse otool -l section records while tolerating Mach-O field ordering."""
     sections: dict[str, tuple[int, int, int]] = {}
     seg = None
     current = None
     pending = {}
     for line in text.splitlines():
         s = line.strip()
-        m = re.match(r"segname\s+(__\S+)", s)
+        m = re.match(r"sectname\\s+(__\\S+)", s)
         if m:
-            seg = m.group(1)
-            current = None
-            pending = {}
-            continue
-        m = re.match(r"sectname\s+(__\S+)", s)
-        if m and seg == "__TEXT":
             current = m.group(1)
             pending = {}
+            continue
+        m = re.match(r"segname\\s+(__\\S+)", s)
+        if m:
+            seg = m.group(1)
             continue
         if current is None or seg != "__TEXT":
             continue
         for key in ("addr", "size", "offset"):
-            m = re.match(rf"{key}\s+(0x[0-9a-fA-F]+|\d+)", s)
+            m = re.match(rf"{key}\\s+(0x[0-9a-fA-F]+|\\d+)", s)
             if m:
                 pending[key] = int(m.group(1), 0)
         if {"addr", "size", "offset"} <= pending.keys():
             sections[current] = (pending["addr"], pending["size"], pending["offset"])
+            pending = {}
     return sections
-
 def string_offsets() -> dict[str, list[int]]:
     text = run("/usr/bin/strings", "-a", "-t", "x", str(FRAMEWORK))
     found = {t: [] for t in TARGETS}
