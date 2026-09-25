@@ -1,0 +1,6 @@
+#!/bin/bash
+set -e
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="$(cd "$APP_DIR/../.." && pwd)"
+cd "$REPO_DIR"
+exec /usr/bin/osascript -e 'tell application "Terminal" to activate' -e 'tell application "Terminal" to do script "cd " & quoted form of "'"$REPO_DIR"'" & " && python3 phase15_intel_gate.py; echo; echo Phase 15 finished. Press any key to close.; read -n 1"'
