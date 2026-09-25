@@ -225,6 +225,7 @@ def full_diagnostic() -> str:
     OUT.mkdir(parents=True, exist_ok=True)
     runtime = run_component("phase15_intel_gate.py")
     static = phase16_static_gate()
+    upstream = run_component("phase17_upstream_probe.py")
     report = "\n".join([
         status_report(),
         "",
@@ -233,6 +234,9 @@ def full_diagnostic() -> str:
         "",
         "=== Static x86_64 Gate Mapping ===",
         static,
+        "",
+        "=== Upstream v1.4.3/v1.4.4 Compatibility Probe ===",
+        upstream,
         "",
     ])
     path = OUT / "full-report.txt"
@@ -259,6 +263,7 @@ def choose() -> str:
         "Full Diagnostic",
         "Status Only",
         "Guarded Patch Check",
+        "Upstream Compatibility Check",
         "Apply Approved Patch",
         "Restore",
         "Open Report",
@@ -275,6 +280,8 @@ def menu() -> int:
             return 0
         if choice == "Full Diagnostic":
             show("Chrome-Patcher", full_diagnostic())
+        elif choice == "Upstream Compatibility Check":
+            show("Chrome-Patcher", run_component("phase17_upstream_probe.py"))
         elif choice == "Status Only":
             show("Chrome-Patcher", status_report())
         elif choice == "Guarded Patch Check":
