@@ -1,49 +1,31 @@
 #!/usr/bin/env python3
-"""Phase 5: Intel Chromium patch engine (guarded; no unvalidated patch bytes).
+"""Guarded Intel Chromium Framework patch engine.
 
-This phase deliberately ships the patching machinery before shipping an Intel
-Broadwell byte patch. A profile must provide an exact expected byte sequence
-and replacement sequence. The engine refuses to modify Chrome unless:
-  1. the detected GPU is Broadwell,
-  2. the installed Chrome milestone matches the profile,
-  3. the framework contains exactly the expected bytes at the expected count,
-  4. a backup can be created before modification.
-
-Default mode is --dry-run.
+Patch data is intentionally empty until an exact Intel-specific gate is
+verified on the target Framework build. The engine is fail-closed.
 """
 from __future__ import annotations
-import argparse, hashlib, shutil, subprocess, sys
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 FRAMEWORK = Path("/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/Current/Google Chrome Framework")
-BACKUP_ROOT = Path.home() / "Desktop" / "chrome-patcher-baseline" / "backups"
-
-# Intentionally empty until Phase 2/4 evidence identifies an Intel-specific
-# gate. Never populate this with an AMD patch or an IOSurface substitution.
-PROFILES = {
-    "broadwell-m154": {
-        "generation": "Broadwell",
-        "device_ids": {0x1616, 0x161E, 0x1626, 0x1627},
-        "milestone": 154,
-        "status": "awaiting-validated-intel-gate",
-        "find_hex": None,
-        "replace_hex": None,
-        "description": "Broadwell/Chrome 154 guarded profile; no patch bytes are approved yet.",
-    },
-}
+ROOT = Path(__file__).resolve().parent
+PROFILE_DB = ROOT / "patchdb" / "profiles.json"
+BACKUP_ROOT = Path.home() / "Desktop/chrome-patcher-baseline" / "backups"
+MANIFEST = BACKUP_ROOT / "patch-manifest.json"
 
 def run(*cmd: str) -> str:
     p = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
     return p.stdout.strip()
-
-def chrome_version() -> str:
-    return run(str(CHROME), "--version")
-
-def milestone(version: str) -> int | None:
-    import re
-    m = re.search(r"\b(\d+)\.\d+\.\d+\.\d+\b", version)
-    return int(m.group(1)) if m else None
 
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -52,82 +34,163 @@ def sha256(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-def detect_gpu() -> tuple[str, int | None, str]:
+def chrome_version() -> str:
+    return run(str(CHROME), "--version")
+
+def parse_milestone(value: str) -> int | None:
+    m = re.search(r"\b(\d+)\.\d+\.\d+\.\d+\b", value)
+    return int(m.group(1)) if m else None
+
+def detect_device() -> int | None:
     text = run("system_profiler", "SPDisplaysDataType")
-    import re
     m = re.search(r"\bdevice\s*(?:id)?\s*[:=]?\s*0x([0-9a-fA-F]{4})\b", text, re.I)
-    device = int(m.group(1), 16) if m else None
-    generation = "Broadwell" if device in PROFILES["broadwell-m154"]["device_ids"] else "unknown"
-    return "Intel" if "Intel" in text else "unknown", device, generation
+    return int(m.group(1), 16) if m else None
+
+def chrome_running() -> bool:
+    return subprocess.run(
+        ["/usr/bin/pgrep", "-f", str(CHROME)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0
+
+def signature(path: Path) -> str:
+    return run("/usr/bin/codesign", "-dv", "--verbose=4", str(path)) if path.exists() else "missing"
+
+def load_profiles() -> dict:
+    return json.loads(PROFILE_DB.read_text(encoding="utf-8"))["profiles"]
+
+def select_profile(device: int | None, milestone: int | None) -> tuple[str | None, dict | None]:
+    if device is None or milestone is None:
+        return None, None
+    needle = f"0x{device:04x}"
+    for name, profile in load_profiles().items():
+        if profile["milestone"] == milestone and needle in [x.lower() for x in profile["device_ids"]]:
+            return name, profile
+    return None, None
+
+def atomic_replace(path: Path, data: bytes) -> str:
+    fd, name = tempfile.mkstemp(prefix=".chrome-framework.", dir=str(path.parent))
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, path.stat().st_mode)
+        os.replace(tmp, path)
+        dfd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+        return sha256(path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--profile", choices=PROFILES, default="broadwell-m154")
-    ap.add_argument("--apply", action="store_true", help="Apply only a fully validated profile.")
+    ap.add_argument("--apply", action="store_true", help="Apply only an approved profile.")
     args = ap.parse_args()
-    profile = PROFILES[args.profile]
 
-    print("=== Phase 5 Intel Patch Gate ===")
-    print(f"Chrome: {chrome_version()}")
-    vendor, device, generation = detect_gpu()
-    print(f"GPU: {vendor} device={f'0x{device:04x}' if device is not None else 'unknown'} generation={generation}")
-    print(f"Framework: {FRAMEWORK}")
-    if not FRAMEWORK.exists():
-        print("REFUSED: Chrome Framework not found.")
+    print("=== Guarded Intel Patch Engine ===")
+    if not CHROME.exists() or not FRAMEWORK.exists():
+        print("REFUSED: Chrome or Framework not found.")
         return 2
 
-    ms = milestone(chrome_version())
-    if ms != profile["milestone"]:
-        print(f"REFUSED: profile expects Chrome milestone {profile['milestone']}, detected {ms}.")
-        return 2
+    app_v = chrome_version()
+    app_ms = parse_milestone(app_v)
+    fw_ms = parse_milestone(FRAMEWORK.parent.name)
+    print("Chrome:", app_v)
+    print("Chrome milestone:", app_ms or "unknown")
+    print("Framework milestone:", fw_ms or "unknown")
+    print("Framework SHA256:", sha256(FRAMEWORK))
 
-    # Phase 11 hard gate: application and Framework must be the same milestone.
-    try:
-        from chromium.milestone import compatibility_snapshot
-        versions = compatibility_snapshot()
-    except Exception as exc:
-        print(f"REFUSED: compatibility preflight failed: {type(exc).__name__}: {exc}")
-        return 2
-    if not versions["match"]:
+    if app_ms is None or fw_ms is None or app_ms != fw_ms:
         print("REFUSED: Chrome application and Framework milestones do not match.")
-        print(f"Chrome milestone: {versions['chrome_milestone'] or 'unknown'}")
-        print(f"Framework milestone: {versions['framework_milestone'] or 'unknown'}")
         return 2
-    if generation != profile["generation"]:
-        print("REFUSED: this profile is Broadwell-only.")
-        return 2
-    if profile["find_hex"] is None or profile["replace_hex"] is None:
-        print("REFUSED: no Intel patch bytes are approved yet.")
-        print("Next evidence required: exact Intel-specific Chromium gate and byte-level validation.")
-        print(f"Framework SHA256: {sha256(FRAMEWORK)}")
-        return 3
 
-    old = bytes.fromhex(profile["find_hex"])
-    new = bytes.fromhex(profile["replace_hex"])
-    if len(old) != len(new) or not old:
+    device = detect_device()
+    profile_name, profile = select_profile(device, app_ms)
+    print("GPU device:", f"0x{device:04x}" if device is not None else "unknown")
+    print("Profile:", profile_name or "none")
+
+    if profile is None:
+        print("REFUSED: no Intel profile for this hardware/milestone.")
+        return 2
+    if not profile["patch_approved"]:
+        print("REFUSED: this profile has no approved Intel patch bytes.")
+        print("Status: diagnostic-only")
+        return 3
+    if chrome_running():
+        print("REFUSED: Chrome is currently running.")
+        return 2
+
+    patch = profile.get("patch") or {}
+    find_hex = patch.get("find_hex")
+    replace_hex = patch.get("replace_hex")
+    expected_sha = patch.get("framework_sha256")
+    patched_sha = patch.get("patched_sha256")
+    if not find_hex or not replace_hex:
+        print("REFUSED: approved profile has no byte sequence.")
+        return 3
+    if expected_sha and sha256(FRAMEWORK) != expected_sha:
+        print("REFUSED: Framework SHA256 does not match the approved build.")
+        return 2
+
+    old = bytes.fromhex(find_hex)
+    new = bytes.fromhex(replace_hex)
+    if not old or len(old) != len(new):
         print("REFUSED: invalid patch lengths.")
         return 2
+
     data = FRAMEWORK.read_bytes()
     count = data.count(old)
-    print(f"Exact signature matches: {count}")
+    print("Exact signature matches:", count)
     if count != 1:
-        print("REFUSED: expected exactly one signature match.")
+        print("REFUSED: expected exactly one unique byte signature.")
         return 2
-    offset = data.index(old)
-    print(f"Patch offset: 0x{offset:x}")
-
-    if not args.apply:
-        print("DRY RUN: no Chrome files modified.")
-        return 0
 
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
-    backup = BACKUP_ROOT / f"Chrome-Framework-{profile['milestone']}-{sha256(FRAMEWORK)[:16]}.bak"
-    shutil.copy2(FRAMEWORK, backup)
-    patched = data[:offset] + new + data[offset + len(old):]
-    FRAMEWORK.write_bytes(patched)
-    print(f"Backup: {backup}")
-    print(f"Patched framework SHA256: {sha256(FRAMEWORK)}")
-    print("IMPORTANT: code signing/notarization is not performed by this script.")
+    original_sha = sha256(FRAMEWORK)
+    backup = BACKUP_ROOT / f"Chrome-Framework-{app_ms}-{original_sha[:16]}.bak"
+    if not backup.exists():
+        shutil.copy2(FRAMEWORK, backup)
+    if sha256(backup) != original_sha:
+        print("REFUSED: backup verification failed.")
+        return 2
+
+    if not args.apply:
+        print("DRY RUN: signature and backup checks passed. No Chrome files modified.")
+        return 0
+
+    patched = data[:data.index(old)] + new + data[data.index(old) + len(old):]
+    final_sha = atomic_replace(FRAMEWORK, patched)
+    if patched_sha and final_sha != patched_sha:
+        print("CRITICAL: post-patch SHA256 mismatch.")
+        return 4
+
+    manifest = {}
+    if MANIFEST.exists():
+        try:
+            manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        except Exception:
+            manifest = {}
+    manifest.setdefault("patches", []).append({
+        "profile": profile_name,
+        "chrome_version": app_v,
+        "original_sha256": original_sha,
+        "patched_sha256": final_sha,
+        "backup": str(backup),
+        "signature_before": signature(backup),
+        "signature_after": signature(FRAMEWORK),
+    })
+    MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print("Applied patch.")
+    print("Backup:", backup)
+    print("Patched Framework SHA256:", final_sha)
+    print("Code signing was not performed by this engine.")
     return 0
 
 if __name__ == "__main__":
