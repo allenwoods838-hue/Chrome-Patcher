@@ -46,19 +46,19 @@ def parse_section_table(text: str) -> dict[str, tuple[int, int, int]]:
     pending = {}
     for line in text.splitlines():
         s = line.strip()
-        m = re.match(r"sectname\\s+(__\\S+)", s)
+        m = re.match(r"sectname\s+(__\S+)", s)
         if m:
             current = m.group(1)
             pending = {}
             continue
-        m = re.match(r"segname\\s+(__\\S+)", s)
+        m = re.match(r"segname\s+(__\S+)", s)
         if m:
             seg = m.group(1)
             continue
         if current is None or seg != "__TEXT":
             continue
         for key in ("addr", "size", "offset"):
-            m = re.match(rf"{key}\\s+(0x[0-9a-fA-F]+|\\d+)", s)
+            m = re.match(rf"{key}\s+(0x[0-9a-fA-F]+|\d+)", s)
             if m:
                 pending[key] = int(m.group(1), 0)
         if {"addr", "size", "offset"} <= pending.keys():
