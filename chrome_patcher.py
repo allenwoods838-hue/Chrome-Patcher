@@ -53,7 +53,12 @@ def milestone(value: str) -> int | None:
     return int(m.group(1)) if m else None
 
 def framework_version() -> str:
-    return FRAMEWORK.parent.name if FRAMEWORK.exists() else "missing"
+    if not FRAMEWORK.exists():
+        return "missing"
+    try:
+        return FRAMEWORK.parent.resolve().name
+    except OSError:
+        return FRAMEWORK.parent.name
 
 def detect_gpu() -> tuple[str, str, str, str]:
     text = run("system_profiler", "SPDisplaysDataType")
@@ -69,8 +74,18 @@ def signature(path: Path) -> str:
 def find_python() -> str | None:
     return shutil.which("python3") or ("/usr/bin/python3" if Path("/usr/bin/python3").exists() else None)
 
+def component_path(name: str) -> Path:
+    candidates = [ROOT / name]
+    if ROOT.name == "Resources":
+        candidates.append(ROOT.parent.parent.parent / name)
+    candidates.append(Path.cwd() / name)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
+
 def run_component(name: str, *args: str) -> str:
-    script = ROOT / name
+    script = component_path(name)
     py = find_python()
     if not script.exists():
         return f"Missing component: {name}"
