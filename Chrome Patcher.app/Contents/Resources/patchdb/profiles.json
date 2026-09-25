@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "project": "Chrome-Patcher",
+  "status": "diagnostic-first",
+  "profiles": {
+    "m152-broadwell": {"generation":"Broadwell","device_ids":["0x1616","0x161e","0x1626","0x1627"],"milestone":152,"patch_approved":false},
+    "m153-broadwell": {"generation":"Broadwell","device_ids":["0x1616","0x161e","0x1626","0x1627"],"milestone":153,"patch_approved":false},
+    "m154-broadwell": {"generation":"Broadwell","device_ids":["0x1616","0x161e","0x1626","0x1627"],"milestone":154,"patch_approved":false},
+    "m155-broadwell": {"generation":"Broadwell","device_ids":["0x1616","0x161e","0x1626","0x1627"],"milestone":155,"patch_approved":false},
+    "m152-haswell": {"generation":"Haswell","device_ids":["0x0412","0x0416","0x0a16","0x0a26"],"milestone":152,"patch_approved":false},
+    "m153-haswell": {"generation":"Haswell","device_ids":["0x0412","0x0416","0x0a16","0x0a26"],"milestone":153,"patch_approved":false},
+    "m154-haswell": {"generation":"Haswell","device_ids":["0x0412","0x0416","0x0a16","0x0a26"],"milestone":154,"patch_approved":false},
+    "m155-haswell": {"generation":"Haswell","device_ids":["0x0412","0x0416","0x0a16","0x0a26"],"milestone":155,"patch_approved":false},
+    "m152-ivy-bridge": {"generation":"Ivy Bridge","device_ids":["0x0152","0x0162","0x0166"],"milestone":152,"patch_approved":false},
+    "m153-ivy-bridge": {"generation":"Ivy Bridge","device_ids":["0x0152","0x0162","0x0166"],"milestone":153,"patch_approved":false},
+    "m154-ivy-bridge": {"generation":"Ivy Bridge","device_ids":["0x0152","0x0162","0x0166"],"milestone":154,"patch_approved":false},
+    "m155-ivy-bridge": {"generation":"Ivy Bridge","device_ids":["0x0152","0x0162","0x0166"],"milestone":155,"patch_approved":false},
+    "m152-skylake": {"generation":"Skylake","device_ids":["0x1902","0x1906","0x190b","0x1912","0x1916","0x1926","0x1927"],"milestone":152,"patch_approved":false},
+    "m153-skylake": {"generation":"Skylake","device_ids":["0x1902","0x1906","0x190b","0x1912","0x1916","0x1926","0x1927"],"milestone":153,"patch_approved":false},
+    "m154-skylake": {"generation":"Skylake","device_ids":["0x1902","0x1906","0x190b","0x1912","0x1916","0x1926","0x1927"],"milestone":154,"patch_approved":false},
+    "m155-skylake": {"generation":"Skylake","device_ids":["0x1902","0x1906","0x190b","0x1912","0x1916","0x1926","0x1927"],"milestone":155,"patch_approved":false}
+  }
+}
