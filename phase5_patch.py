@@ -101,7 +101,7 @@ def main() -> int:
 
     app_v = chrome_version()
     app_ms = parse_milestone(app_v)
-    fw_ms = parse_milestone(FRAMEWORK.parent.name)
+    fw_ms = parse_milestone(FRAMEWORK.parent.resolve().name)
     print("Chrome:", app_v)
     print("Chrome milestone:", app_ms or "unknown")
     print("Framework milestone:", fw_ms or "unknown")
