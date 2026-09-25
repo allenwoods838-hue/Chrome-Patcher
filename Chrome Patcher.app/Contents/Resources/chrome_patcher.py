@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
-"""Unified Chrome-Patcher controller for legacy Intel Macs.
-
-Safe by default. Diagnostics are read-only; patching remains fail-closed.
-"""
+"""Unified Chrome-Patcher controller for legacy Intel Macs."""
 from __future__ import annotations
-
 import argparse
 import hashlib
 import platform
@@ -39,14 +35,7 @@ GPU_MAP = {
 }
 
 def run(*cmd: str, timeout: int = 120) -> str:
-    p = subprocess.run(
-        cmd,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-        timeout=timeout,
-    )
+    p = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False, timeout=timeout)
     return p.stdout.strip()
 
 def sha256(path: Path) -> str:
@@ -75,96 +64,124 @@ def detect_gpu() -> tuple[str, str, str, str]:
     return vendor, device, model, generation
 
 def signature(path: Path) -> str:
-    if not path.exists():
-        return "missing"
-    return run("/usr/bin/codesign", "-dv", "--verbose=4", str(path))
+    return run("/usr/bin/codesign", "-dv", "--verbose=4", str(path)) if path.exists() else "missing"
 
 def find_python() -> str | None:
     return shutil.which("python3") or ("/usr/bin/python3" if Path("/usr/bin/python3").exists() else None)
 
-def status_report() -> str:
-    vendor, device, model, generation = detect_gpu()
-    chrome_v = chrome_version()
-    app_ms = milestone(chrome_v)
-    fw_name = framework_version()
-    fw_ms = milestone(fw_name)
-    lines = [
-        "Chrome-Patcher status",
-        "",
-        f"OS: {platform.system()} {platform.mac_ver()[0] or 'unknown'}",
-        f"Chrome: {chrome_v}",
-        f"Chrome milestone: {app_ms or 'unknown'}",
-        f"Framework version: {fw_name}",
-        f"Framework milestone: {fw_ms or 'unknown'}",
-        f"Application/Framework match: {'yes' if app_ms and fw_ms and app_ms == fw_ms else 'no'}",
-        f"Framework SHA256: {sha256(FRAMEWORK) if FRAMEWORK.exists() else 'missing'}",
-        f"GPU: {vendor} / {device} / {model} / {generation}",
-        f"Framework signature: {signature(FRAMEWORK).splitlines()[0] if FRAMEWORK.exists() else 'missing'}",
-        "",
-        "Patch mode: FAIL-CLOSED",
-        "Published Intel byte patches: NONE",
-    ]
-    return "\n".join(lines)
-
-def run_component(name: str) -> str:
+def run_component(name: str, *args: str) -> str:
     script = ROOT / name
     py = find_python()
     if not script.exists():
         return f"Missing component: {name}"
     if not py:
         return "REFUSED: Python 3 was not found."
-    return run(py, str(script), timeout=240)
+    return run(py, str(script), *args, timeout=300)
+
+def status_report() -> str:
+    vendor, device, model, generation = detect_gpu()
+    app_v = chrome_version()
+    app_ms = milestone(app_v)
+    fw_v = framework_version()
+    fw_ms = milestone(fw_v)
+    return "\n".join([
+        "Chrome-Patcher",
+        "",
+        f"macOS: {platform.mac_ver()[0] or 'unknown'}",
+        f"Chrome: {app_v}",
+        f"Chrome milestone: {app_ms or 'unknown'}",
+        f"Framework: {fw_v}",
+        f"Framework milestone: {fw_ms or 'unknown'}",
+        f"Application/Framework match: {'YES' if app_ms and fw_ms and app_ms == fw_ms else 'NO'}",
+        f"GPU: {vendor} / {device} / {model} / {generation}",
+        f"Framework SHA256: {sha256(FRAMEWORK) if FRAMEWORK.exists() else 'missing'}",
+        "",
+        "PATCH STATUS: NO INTEL BYTE PATCHES APPROVED",
+        "MODE: FAIL-CLOSED",
+    ])
 
 def full_diagnostic() -> str:
     OUT.mkdir(parents=True, exist_ok=True)
+    runtime = run_component("phase15_intel_gate.py")
+    static = run_component("phase16_static_gate.py", "--no-disassembly")
     report = "\n".join([
         status_report(),
         "",
-        "=== Phase 15 Runtime ANGLE/EGL ===",
-        run_component("phase15_intel_gate.py"),
+        "=== Runtime ANGLE/EGL ===",
+        runtime,
         "",
-        "=== Phase 16 Static x86_64 Gate Mapping ===",
-        run_component("phase16_static_gate.py"),
+        "=== Static x86_64 Gate Mapping ===",
+        static,
         "",
     ])
     path = OUT / "full-report.txt"
     path.write_text(report, encoding="utf-8")
-    return report + f"Saved: {path}"
+    summary = "\n".join([
+        "Full Diagnostic complete.",
+        "",
+        "The detailed evidence was saved to:",
+        str(path),
+        "",
+        "No Chrome files were modified.",
+    ])
+    return summary
 
-def gui_show(title: str, message: str) -> None:
+def show(title: str, message: str) -> None:
     safe = message.replace("\\", "/").replace('"', '\"')
-    subprocess.run(
-        ["/usr/bin/osascript", "-e", f'display dialog "{safe[-9000:]}" buttons {{"Close"}} default button "Close" with title "{title}"'],
-        check=False,
-    )
+    subprocess.run([
+        "/usr/bin/osascript", "-e",
+        f'display dialog "{safe[-7000:]}" buttons {{"Close"}} default button "Close" with title "{title}"'
+    ], check=False)
+
+def choose() -> str:
+    items = [
+        "Full Diagnostic",
+        "Status Only",
+        "Guarded Patch Check",
+        "Apply Approved Patch",
+        "Restore",
+        "Open Report",
+        "Quit",
+    ]
+    joined = '","'.join(items)
+    script = f'choose from list {{"{joined}"}} with prompt "Chrome-Patcher"'
+    return run("/usr/bin/osascript", "-e", script)
 
 def menu() -> int:
-    choices = ["Full Diagnostic", "Status Only", "Guarded Patch Check", "Restore", "Open Report", "Quit"]
     while True:
-        script = 'choose from list {"' + '","'.join(choices) + '"} with prompt "Chrome-Patcher"'
-        out = run("/usr/bin/osascript", "-e", script)
-        if not out or out in {"false", "Quit"}:
+        choice = choose()
+        if choice in {"", "false", "Quit"}:
             return 0
-        if out == "Full Diagnostic":
-            gui_show("Chrome-Patcher", full_diagnostic())
-        elif out == "Status Only":
-            gui_show("Chrome-Patcher", status_report())
-        elif out == "Guarded Patch Check":
-            gui_show("Chrome-Patcher", run_component("phase5_patch.py"))
-        elif out == "Restore":
-            confirm = run("/usr/bin/osascript", "-e", 'display dialog "Restore Chrome from the latest verified patch backup?" buttons {"Cancel","Restore"} default button "Cancel" with title "Chrome-Patcher"')
+        if choice == "Full Diagnostic":
+            show("Chrome-Patcher", full_diagnostic())
+        elif choice == "Status Only":
+            show("Chrome-Patcher", status_report())
+        elif choice == "Guarded Patch Check":
+            show("Chrome-Patcher", run_component("phase5_patch.py"))
+        elif choice == "Apply Approved Patch":
+            confirm = run(
+                "/usr/bin/osascript", "-e",
+                'display dialog "Apply the approved Intel patch? The patch engine will refuse unless every safety gate passes." buttons {"Cancel","Apply"} default button "Cancel" with title "Chrome-Patcher"'
+            )
+            if "Apply" in confirm:
+                show("Chrome-Patcher", run_component("phase5_patch.py", "--apply"))
+        elif choice == "Restore":
+            confirm = run(
+                "/usr/bin/osascript", "-e",
+                'display dialog "Restore Chrome from a verified patch backup?" buttons {"Cancel","Restore"} default button "Cancel" with title "Chrome-Patcher"'
+            )
             if "Restore" in confirm:
-                gui_show("Chrome-Patcher", run_component("restore.py"))
-        elif out == "Open Report":
+                show("Chrome-Patcher", run_component("restore.py", "--apply"))
+        elif choice == "Open Report":
             path = OUT / "full-report.txt"
             if path.exists():
                 run("/usr/bin/open", str(path))
             else:
-                gui_show("Chrome-Patcher", "No report exists yet. Run Full Diagnostic first.")
+                show("Chrome-Patcher", "No report exists yet. Run Full Diagnostic first.")
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", nargs="?", choices=["menu", "status", "diagnostic", "patch", "restore", "report"], default="menu")
+    ap.add_argument("command", nargs="?", choices=["menu","status","diagnostic","patch","restore","report"], default="menu")
     args = ap.parse_args()
     if args.command == "menu":
         return menu()
@@ -175,7 +192,7 @@ def main() -> int:
     elif args.command == "patch":
         print(run_component("phase5_patch.py"))
     elif args.command == "restore":
-        print(run_component("restore.py"))
+        print(run_component("restore.py", "--apply"))
     elif args.command == "report":
         path = OUT / "full-report.txt"
         print(path.read_text(encoding="utf-8") if path.exists() else "No report exists yet.")
