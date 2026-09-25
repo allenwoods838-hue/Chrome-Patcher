@@ -80,6 +80,19 @@ def main() -> int:
     if ms != profile["milestone"]:
         print(f"REFUSED: profile expects Chrome milestone {profile['milestone']}, detected {ms}.")
         return 2
+
+    # Phase 11 hard gate: application and Framework must be the same milestone.
+    try:
+        from chromium.milestone import compatibility_snapshot
+        versions = compatibility_snapshot()
+    except Exception as exc:
+        print(f"REFUSED: compatibility preflight failed: {type(exc).__name__}: {exc}")
+        return 2
+    if not versions["match"]:
+        print("REFUSED: Chrome application and Framework milestones do not match.")
+        print(f"Chrome milestone: {versions['chrome_milestone'] or 'unknown'}")
+        print(f"Framework milestone: {versions['framework_milestone'] or 'unknown'}")
+        return 2
     if generation != profile["generation"]:
         print("REFUSED: this profile is Broadwell-only.")
         return 2
