@@ -115,10 +115,116 @@ def status_report() -> str:
         "MODE: FAIL-CLOSED",
     ])
 
+def phase16_static_gate() -> str:
+    framework = FRAMEWORK
+    out_dir = DESKTOP / "phase16"
+    if not framework.exists():
+        return "Phase 16: Chrome Framework not found."
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    data = framework.read_bytes()
+    framework_hash = sha256(framework)
+    file_info = run("/usr/bin/file", str(framework)).strip()
+    load_info = run("/usr/bin/otool", "-arch", "x86_64", "-l", str(framework))
+
+    def sections(text: str) -> dict[str, tuple[int, int, int]]:
+        result = {}
+        seg = None
+        current = None
+        pending = {}
+        for line in text.splitlines():
+            s = line.strip()
+            m = re.match(r"segname\s+(__\S+)", s)
+            if m:
+                seg = m.group(1)
+                current = None
+                pending = {}
+                continue
+            m = re.match(r"sectname\s+(__\S+)", s)
+            if m and seg == "__TEXT":
+                current = m.group(1)
+                pending = {}
+                continue
+            if seg != "__TEXT" or current is None:
+                continue
+            for key in ("addr", "size", "offset"):
+                m = re.match(rf"{key}\s+(0x[0-9a-fA-F]+|\d+)", s)
+                if m:
+                    pending[key] = int(m.group(1), 0)
+            if {"addr", "size", "offset"} <= pending.keys():
+                result[current] = (pending["addr"], pending["size"], pending["offset"])
+        return result
+
+    sec = sections(load_info)
+    if "__text" not in sec or "__cstring" not in sec:
+        return "Phase 16: x86_64 __text/__cstring sections not found.\nNo Chrome files were modified."
+
+    text_addr, text_size, text_off = sec["__text"]
+    cstr_addr, cstr_size, cstr_off = sec["__cstring"]
+    cstr = data[cstr_off:cstr_off + cstr_size]
+
+    targets = (
+        b"Requested GL implementation",
+        b"not found in allowed implementations",
+        b"angle=metal",
+        b"angle=opengl",
+        b"GetAllowedGLImplementation",
+        b"GetDisplayInitializationParams",
+    )
+    found = []
+    target_vms = set()
+    for target in targets:
+        start = 0
+        while True:
+            idx = cstr.find(target, start)
+            if idx < 0:
+                break
+            vm = cstr_addr + idx
+            label = target.decode("ascii", errors="replace")
+            found.append((label, cstr_off + idx, vm))
+            target_vms.add(vm)
+            start = idx + 1
+
+    text_bytes = data[text_off:text_off + text_size]
+    refs = []
+    for i in range(max(0, len(text_bytes) - 7)):
+        if i + 7 <= len(text_bytes) and 0x40 <= text_bytes[i] <= 0x4f:
+            op = text_bytes[i + 1]
+            if op in (0x8b, 0x8d, 0x89, 0x8a, 0x3b, 0x39, 0x81, 0x83):
+                modrm = text_bytes[i + 2]
+                if ((modrm >> 6) & 3) == 0 and (modrm & 7) == 5:
+                    disp = int.from_bytes(text_bytes[i + 3:i + 7], "little", signed=True)
+                    target = text_addr + i + 7 + disp
+                    if target in target_vms:
+                        refs.append((text_off + i, text_addr + i, target))
+    report_lines = [
+        "Phase 16",
+        "Mode: READ_ONLY",
+        f"Framework SHA256: {framework_hash}",
+        f"file: {file_info}",
+        f"__text addr=0x{text_addr:x} size=0x{text_size:x} offset=0x{text_off:x}",
+        f"__cstring addr=0x{cstr_addr:x} size=0x{cstr_size:x} offset=0x{cstr_off:x}",
+        "",
+        "Relevant strings:",
+    ]
+    if found:
+        for label, off, vm in found:
+            report_lines.append(f"- {label} file=0x{off:x} vm=0x{vm:x}")
+    else:
+        report_lines.append("- none")
+    report_lines.extend(["", f"RIP-relative references: {len(refs)}"])
+    for file_off, vm, target in refs[:20]:
+        report_lines.append(f"- code file=0x{file_off:x} vm=0x{vm:x} -> string=0x{target:x}")
+    report_lines.append("")
+    report_lines.append("No Chrome files were modified.")
+    path = out_dir / "static_gate.txt"
+    path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+    return "\n".join(report_lines)
+
 def full_diagnostic() -> str:
     OUT.mkdir(parents=True, exist_ok=True)
     runtime = run_component("phase15_intel_gate.py")
-    static = run_component("phase16_static_gate.py", "--no-disassembly")
+    static = phase16_static_gate()
     report = "\n".join([
         status_report(),
         "",
